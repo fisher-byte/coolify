@@ -1,0 +1,57 @@
+minimumLimaVersion: 2.0.0
+
+images:
+  - location: "https://mirrors.tuna.tsinghua.edu.cn/ubuntu-cloud-images/noble/current/noble-server-cloudimg-arm64.img"
+    arch: "aarch64"
+
+vmType: "vz"
+arch: "aarch64"
+cpus: 2
+memory: "4GiB"
+disk: "30GiB"
+mountType: "virtiofs"
+
+mounts:
+  - location: "~"
+    writable: true
+
+containerd:
+  system: false
+  user: false
+
+provision:
+  - mode: system
+    script: |
+      #!/bin/bash
+      set -eux -o pipefail
+      sed -i 's/host.lima.internal.*/host.lima.internal host.docker.internal/' /etc/hosts
+      if [ -f /etc/apt/sources.list.d/ubuntu.sources ]; then
+        sed -i 's#http://ports.ubuntu.com/ubuntu-ports#https://mirrors.tuna.tsinghua.edu.cn/ubuntu-ports#g' /etc/apt/sources.list.d/ubuntu.sources
+        sed -i 's#http://archive.ubuntu.com/ubuntu#https://mirrors.tuna.tsinghua.edu.cn/ubuntu#g' /etc/apt/sources.list.d/ubuntu.sources
+      fi
+      export DEBIAN_FRONTEND=noninteractive
+      apt-get update
+      apt-get install -y docker.io curl ca-certificates
+      mkdir -p /etc/systemd/system/docker.socket.d
+      cat >/etc/systemd/system/docker.socket.d/override.conf <<'EOF'
+      [Socket]
+      SocketUser={{.User}}
+      EOF
+      systemctl daemon-reload
+      systemctl enable --now docker.socket docker.service
+
+probes:
+  - script: |
+      #!/bin/bash
+      set -eux -o pipefail
+      timeout 120s bash -c "until command -v docker >/dev/null 2>&1; do sleep 3; done"
+      timeout 120s bash -c "until pgrep dockerd >/dev/null 2>&1; do sleep 3; done"
+    hint: See "/var/log/cloud-init-output.log" in the guest.
+
+hostResolver:
+  hosts:
+    host.docker.internal: host.lima.internal
+
+portForwards:
+  - guestSocket: "/var/run/docker.sock"
+    hostSocket: "{{.Dir}}/sock/docker.sock"
